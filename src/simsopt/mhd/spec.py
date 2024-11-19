@@ -13,6 +13,8 @@ import traceback
 from typing import Optional
 from scipy.constants import mu_0
 
+from scipy.interpolate import interp1d
+from .._core.util import Struct
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ from .._core.optimizable import Optimizable
 from .._core.util import ObjectiveFailure
 from ..field.normal_field import NormalField
 from ..geo.surfacerzfourier import SurfaceRZFourier
+from ..geo import Surface
 from .profiles import ProfileSpec
 
 if MPI is not None:
@@ -112,8 +115,9 @@ class Spec(Optimizable):
         self.lib = spec
         # For the most commonly accessed fortran modules, provide a
         # shorthand:
-        setattr(self, "inputlist", getattr(spec, "inputlist"))
-        setattr(self, "allglobal", getattr(spec, "allglobal"))
+        self.allglobal = getattr(spec, "allglobal")
+        self.inputlist = getattr(spec, "inputlist")
+        si = self.inputlist  # Shorthand
 
         self.verbose = verbose
         # mute screen output if necessary
@@ -127,7 +131,7 @@ class Spec(Optimizable):
         else:
             self.mpi = mpi
         # SPEC will use the "groups" communicator from the MpiPartition:
-        self.lib.allglobal.set_mpi_comm(self.mpi.comm_groups.py2f())
+        self.allglobal.set_mpi_comm(self.mpi.comm_groups.py2f())
 
         if filename is None:
             # Read default input file, which should be in the same
@@ -145,12 +149,11 @@ class Spec(Optimizable):
         #If spec has run before, clear the f90wrap array caches.
         # See https://github.com/hiddenSymmetries/simsopt/pull/431
         # This addresses the issue https://github.com/hiddenSymmetries/simsopt/issues/357
-        if spec.allglobal._arrays:
+        if self.allglobal._arrays:
             self._clear_f90wrap_array_caches()
 
         # Initialize the FORTRAN state with values in the input file:
         self._init_fortran_state(filename)
-        si = spec.inputlist  # Shorthand
 
         # Copy useful and commonly used values from SPEC inputlist to 
         self.stellsym = bool(si.istellsym)
@@ -316,9 +319,9 @@ class Spec(Optimizable):
         Set initial guesses in SPEC from a list of surfaceRZFourier objects.
         """
         # Set all modes to zero
-        spec.allglobal.mmrzrz[:] = 0
-        spec.allglobal.nnrzrz[:] = 0
-        spec.allglobal.allrzrz[:] = 0
+        self.allglobal.mmrzrz[:] = 0
+        self.allglobal.nnrzrz[:] = 0
+        self.allglobal.allrzrz[:] = 0
 
         # transform to SurfaceRZFourier if necessary
         initial_guess = [s.to_RZFourier() for s in self.initial_guess]
@@ -332,34 +335,34 @@ class Spec(Optimizable):
 
                 imn += 1
 
-                spec.allglobal.mmrzrz[imn] = mm
-                spec.allglobal.nnrzrz[imn] = nn
+                self.allglobal.mmrzrz[imn] = mm
+                self.allglobal.nnrzrz[imn] = nn
 
                 # Populate inner plasma boundaries
                 for lvol in range(0, self.nvol-1):
-                    spec.allglobal.allrzrz[0, lvol, imn] = initial_guess[lvol].get_rc(mm, nn)
-                    spec.allglobal.allrzrz[1, lvol, imn] = initial_guess[lvol].get_zs(mm, nn)
+                    self.allglobal.allrzrz[0, lvol, imn] = initial_guess[lvol].get_rc(mm, nn)
+                    self.allglobal.allrzrz[1, lvol, imn] = initial_guess[lvol].get_zs(mm, nn)
 
                     if not self.stellsym:
-                        spec.allglobal.allrzrz[2, lvol, imn] = initial_guess[lvol].get_rs(mm, nn)
-                        spec.allglobal.allrzrz[3, lvol, imn] = initial_guess[lvol].get_zc(mm, nn)
-        spec.allglobal.num_modes = imn + 1
+                        self.allglobal.allrzrz[2, lvol, imn] = initial_guess[lvol].get_rs(mm, nn)
+                        self.allglobal.allrzrz[3, lvol, imn] = initial_guess[lvol].get_zc(mm, nn)
+        self.allglobal.num_modes = imn + 1
     # possibly cleaner way to do this (tested to work Chris Smiet 11/9/2023):
 #            n_indices, m_values = np.indices([2*si.ntor+1, si.mpol+1]) #get indices for array
 #            n_values = n_indices - si.ntor # offset indices to correspond with mode numbers
 #            index_mask = ~np.logical_and(m_values==0, n_values < 0) # twiddle ~ NOT, pick elements
 #            numel = np.sum(index_mask) # number of trues in mask, i.e. chosen elements
-#            spec.allglobal.mmrzrz[:numel] = m_values[index_mask] # skip elements, make 1
-#            spec.allglobal.nnrzrz[:numel] = n_values[index_mask] # skip m==0 n<0 elements
+#            self.allglobal.mmrzrz[:numel] = m_values[index_mask] # skip elements, make 1
+#            self.allglobal.nnrzrz[:numel] = n_values[index_mask] # skip m==0 n<0 elements
 #            
 #            initial_guess = [s.to_RZFourier() for s in self.initial_guess]
 #            for lvol, surface in enumerate(initial_guess):
 #                # EXPLAIN: surface.rc is m,n indexed, transpose, apply above mask which unravels to 1d
-#                spec.allglobal.allrzrz[0, lvol, :numel] = surface.rc.transpose()[index_mask] 
-#                spec.allglobal.allrzrz[1, lvol, :numel] = surface.zs.transpose()[index_mask]
+#                self.allglobal.allrzrz[0, lvol, :numel] = surface.rc.transpose()[index_mask] 
+#                self.allglobal.allrzrz[1, lvol, :numel] = surface.zs.transpose()[index_mask]
 #                if not self.stellsym:
-#                    spec.allglobal.allrzrz[2, lvol, :numel] = surface.rs.transpose()[index_mask]
-#                    spec.allglobal.allrzrz[3, lvol, :numel] = surface.zc.transpose()[index_mask]
+#                    self.allglobal.allrzrz[2, lvol, :numel] = surface.rs.transpose()[index_mask]
+#                    self.allglobal.allrzrz[3, lvol, :numel] = surface.zc.transpose()[index_mask]
 
     @property
     def boundary(self):
@@ -445,8 +448,8 @@ class Spec(Optimizable):
             raise ValueError('Input should be a ProfileSpec')
 
         # Check size
-        if pressure_profile.dofs.full_x.size != self.mvol:
-            raise ValueError('Invalid number of dofs. Should be equal to Mvol!')
+        if pressure_profile.dofs.full_x.size != self.nvol:
+            raise ValueError('Invalid number of dofs. Should be equal to nvol!')
 
         # Update pressure profile
         if pressure_profile is not self._pressure_profile:
@@ -481,8 +484,8 @@ class Spec(Optimizable):
             raise ValueError('Input should be a ProfileSpec')
 
         # Check size
-        if volume_current_profile.dofs.full_x.size != self.mvol:
-            raise ValueError('Invalid number of dofs. Should be equal to Mvol!')
+        if volume_current_profile.dofs.full_x.size != self.nvol:
+            raise ValueError('Invalid number of dofs. Should be equal to nvol!')
 
         # Volume current is a cumulative property
         volume_current_profile.cumulative = True
@@ -519,8 +522,8 @@ class Spec(Optimizable):
             raise ValueError('Input should be a ProfileSpec')
 
         # Check size
-        if interface_current_profile.dofs.full_x.size != self.mvol:
-            raise ValueError('Invalid number of dofs. Should be equal to Mvol!')
+        if interface_current_profile.dofs.full_x.size != self.nvol-1:
+            raise ValueError('Invalid number of dofs. Should be equal to nvol-1!')
 
         if interface_current_profile is not self._interface_current_profile:
             logging.debug('Replacing interface_current_profile in setter')
@@ -763,15 +766,15 @@ class Spec(Optimizable):
                 - 'helicity'
         """
         profile_dict = {
-            'pressure': {'specname': 'pressure', 'cumulative': False, 'length': self.nvol},
-            'volume_current': {'specname': 'ivolume', 'cumulative': True, 'length': self.nvol},
+            'pressure':        {'specname': 'pressure', 'cumulative': False, 'length': self.nvol},
+            'volume_current':  {'specname': 'ivolume', 'cumulative': True, 'length': self.nvol},
             'interface_current': {'specname': 'isurf', 'cumulative': False, 'length': self.nvol-1},
-            'helicity': {'specname': 'helicity', 'cumulative': False, 'length': self.mvol},
-            'iota': {'specname': 'iota', 'cumulative': False, 'length': self.mvol},
-            'oita': {'specname': 'oita', 'cumulative': False, 'length': self.mvol},
-            'mu': {'specname': 'mu', 'cumulative': False, 'length': self.mvol},
-            'pflux': {'specname': 'pflux', 'cumulative': True, 'length': self.mvol},
-            'tflux': {'specname': 'tflux', 'cumulative': True, 'length': self.mvol}
+            'helicity':        {'specname': 'helicity', 'cumulative': False, 'length': self.mvol},
+            'iota':            {'specname': 'iota', 'cumulative': False, 'length': self.mvol},
+            'oita':            {'specname': 'oita', 'cumulative': False, 'length': self.mvol},
+            'mu':              {'specname': 'mu', 'cumulative': False, 'length':   self.mvol},
+            'pflux':           {'specname': 'pflux', 'cumulative': True, 'length': self.mvol},
+            'tflux':           {'specname': 'tflux', 'cumulative': True, 'length': self.mvol}
         }
 
         profile_data = self.inputlist.__getattribute__(profile_dict[longname]['specname'])[0:profile_dict[longname]['length']]
@@ -884,8 +887,8 @@ class Spec(Optimizable):
 
         This function is for addressing the issue https://github.com/hiddenSymmetries/simsopt/issues/357
         """
-        spec.allglobal._arrays = {}
-        spec.inputlist._arrays = {}
+        self.allglobal._arrays = {}
+        self.inputlist._arrays = {}
 
     def _init_fortran_state(self, filename: str):
         """
@@ -896,18 +899,18 @@ class Spec(Optimizable):
         """
         logger.debug("Entering init")
         if self.mpi.proc0_groups:
-            spec.inputlist.initialize_inputs()
+            self.inputlist.initialize_inputs()
             logger.debug("Done with initialize_inputs")
             self.extension = filename[:-3]  # Remove the ".sp"
-            spec.allglobal.ext = self.extension
-            spec.allglobal.read_inputlists_from_file()
+            self.allglobal.ext = self.extension
+            self.allglobal.read_inputlists_from_file()
             logger.debug("Done with read_inputlists_from_file")
-            spec.allglobal.check_inputs()
+            self.allglobal.check_inputs()
 
         logger.debug('About to call broadcast_inputs')
-        spec.allglobal.broadcast_inputs()
+        self.allglobal.broadcast_inputs()
         logger.debug('About to call preset')
-        spec.preset()
+        self.lib.preset()
         logger.debug("Done with init")
 
     def run(self, update_guess: bool = True):
@@ -1085,36 +1088,36 @@ class Spec(Optimizable):
             # Here is where we actually run SPEC:
             if self.mpi.proc0_groups:
                 logger.debug('About to call check_inputs')
-                spec.allglobal.check_inputs()
+                self.allglobal.check_inputs()
             logger.debug('About to call broadcast_inputs')
             self.mpi.comm_groups.Barrier()  # Barrier to ensure all groups are ready to broadcast. 
-            spec.allglobal.broadcast_inputs()
+            self.allglobal.broadcast_inputs()
             logger.debug('About to call preset')
-            spec.preset()
+            self.lib.preset()
             logger.debug('About to call init_outfile')
-            spec.sphdf5.init_outfile()
+            self.lib.sphdf5.init_outfile()
             logger.debug('About to call mirror_input_to_outfile')
-            spec.sphdf5.mirror_input_to_outfile()
+            self.lib.sphdf5.mirror_input_to_outfile()
             if self.mpi.proc0_groups:
                 logger.debug('About to call wrtend')
-                spec.allglobal.wrtend()
+                self.allglobal.wrtend()
             logger.debug('About to call init_convergence_output')
-            spec.sphdf5.init_convergence_output()
+            self.lib.sphdf5.init_convergence_output()
             logger.debug('About to call spec')
-            spec.spec()
+            self.lib.spec()
             logger.debug('About to call diagnostics')
-            spec.final_diagnostics()
+            self.lib.final_diagnostics()
             logger.debug('About to call write_grid')
-            spec.sphdf5.write_grid()
+            self.lib.sphdf5.write_grid()
             if self.mpi.proc0_groups:
                 logger.debug('About to call wrtend')
-                spec.allglobal.wrtend()
+                self.allglobal.wrtend()
             logger.debug('About to call hdfint')
-            spec.sphdf5.hdfint()
+            self.lib.sphdf5.hdfint()
             logger.debug('About to call finish_outfile')
-            spec.sphdf5.finish_outfile()
+            self.lib.sphdf5.finish_outfile()
             logger.debug('About to call ending')
-            spec.ending()
+            self.lib.ending()
 
         except BaseException:
             if self.verbose:
@@ -1404,3 +1407,337 @@ class Residue(Optimizable):
         logger.info(f"group {self.mpi.group} found residue {self.fixed_point.GreenesResidue} for {self.pp}/{self.qq} in {self.spec.allglobal.ext}")
 
         return self.fixed_point.GreenesResidue
+
+
+class QuasisymmetryRatioResidualSpec(Optimizable):
+    r"""
+    This class provides a measure of the deviation from quasisymmetry,
+    one that can be computed without Boozer coordinates.  This metric
+    is based on the fact that for quasisymmetry, the ratio
+
+    .. math::
+        (\vec{B}\times\nabla B \cdot\nabla\psi) / (\vec{B} \cdot\nabla B)
+
+    is constant on flux surfaces.
+
+    Specifically, this class represents the objective function
+
+    .. math::
+        f = \sum_{s_j} w_j \left< \left[ \frac{1}{B^3} \left( (N - \iota M)\vec{B}\times\nabla B\cdot\nabla\psi - (MG+NI)\vec{B}\cdot\nabla B \right) \right]^2 \right>
+
+    where the sum is over a set of flux surfaces with normalized
+    toroidal flux :math:`s_j`, the coefficients :math:`w_j` are
+    user-supplied weights, :math:`\left< \ldots \right>` denotes a
+    flux surface average, :math:`G(s)` is :math:`\mu_0/(2\pi)` times
+    the poloidal current outside the surface, :math:`I(s)` is
+    :math:`\mu_0/(2\pi)` times the toroidal current inside the
+    surface, :math:`\mu_0` is the permeability of free space,
+    :math:`2\pi\psi` is the toroidal flux, and :math:`(M,N)` are
+    user-supplied integers that specify the desired helicity of
+    symmetry. If the magnetic field is quasisymmetric, so
+    :math:`B=B(\psi,\chi)` where :math:`\chi=M\vartheta - N\varphi`
+    where :math:`(\vartheta,\varphi)` are the poloidal and toroidal
+    Boozer angles, then :math:`\vec{B}\times\nabla B\cdot\nabla\psi
+    \to -(MG+NI)(\vec{B}\cdot\nabla\varphi)\partial B/\partial \chi`
+    and :math:`\vec{B}\cdot\nabla B \to (-N+\iota
+    M)(\vec{B}\cdot\nabla\varphi)\partial B/\partial \chi`, implying
+    the metric :math:`f` vanishes. The flux surface average is
+    discretized using a uniform grid in the SPEC poloidal and toroidal
+    angles :math:`(\theta,\phi)`. In this case :math:`f` can be
+    written as a finite sum of squares:
+
+    .. math::
+        f = \sum_{s_j, \theta_j, \phi_j} R(s_j, \theta_k, \phi_{\ell})^2
+
+    where the :math:`\phi_{\ell}` grid covers a single field period.
+    Here, each residual term is
+
+    .. math::
+        R(\theta, \phi) = \sqrt{w_j \frac{n_{fp} \Delta_{\theta} \Delta_{\phi}}{V'}|\sqrt{g}|}
+        \frac{1}{B^3} \left( (N-\iota M)\vec{B}\times\nabla B\cdot\nabla\psi - (MG+NI)\vec{B}\cdot\nabla B \right).
+
+    Here, :math:`n_{fp}` is the number of field periods,
+    :math:`\Delta_{\theta}` and :math:`\Delta_{\phi}` are the spacing
+    of grid points in the poloidal and toroidal angles,
+    :math:`\sqrt{g} = 1/(\nabla s\cdot\nabla\theta \times
+    \nabla\phi)` is the Jacobian of the :math:`(s,\theta,\phi)`
+    coordinates, and :math:`V' = \int_0^{2\pi} d\theta \int_0^{2\pi}d\phi |\sqrt{g}| = dV/d\psi`
+    where :math:`V` is the volume enclosed by a flux surface.
+
+    Args:
+        spec: A :obj:`simsopt.mhd.Spec` object from which the
+          quasisymmetry error will be calculated.
+        surfaces: Value of normalized toroidal flux at which you want the
+          quasisymmetry error evaluated, or a list of values. Each
+          value must be in the interval [0, 1], with 0 corresponding
+          to the magnetic axis and 1 to the SPEC plasma boundary. If None, 
+          it will use the array of tflux values in the Spec inputlist as surfaces. 
+          This parameter corresponds to :math:`s_j` above.
+        helicity_m: Desired poloidal mode number :math:`M` in the magnetic field
+          strength :math:`B`, so
+          :math:`B = B(s, M \vartheta - n_{fp} \hat{N} \varphi)`
+          where :math:`\vartheta` and :math:`\varphi` are Boozer angles.
+        helicity_n: Desired toroidal mode number :math:`\hat{N} = N / n_{fp}` in the magnetic field
+          strength :math:`B`, so
+          :math:`B = B(s, M \vartheta - n_{fp} \hat{N} \varphi)`
+          where :math:`\vartheta` and :math:`\varphi` are Boozer angles.
+          Note that the supplied value of ``helicity_n`` will be multiplied by
+          the number of field periods :math:`n_{fp}`, so typically
+          ``helicity_n`` should be +1 or -1 for quasi-helical symmetry.
+        weights: The list of weights :math:`w_j` for each flux surface.
+          If ``None``, a weight of :math:`w_j=1` will be used for
+          all surfaces.
+        ntheta: Number of grid points in :math:`\theta` used to
+          discretize the flux surface average.
+        nphi: Number of grid points per field period in :math:`\phi` used to
+          discretize the flux surface average.
+    """
+
+    def __init__(self,
+                 spec: Spec,
+                 surfaces: np.ndarray = None,
+                 helicity_m: int = 1,
+                 helicity_n: int = 0,
+                 weights: np.ndarray = None,
+                 ntheta: int = 63,
+                 nphi: int = 64) -> None:
+
+        self.spec = spec
+
+        self.ntheta = ntheta
+        self.nphi = nphi
+        self.helicity_m = helicity_m
+        self.helicity_n = helicity_n
+
+        
+        if surfaces is None:
+            self.surfaces = np.array([spec.surfaces[0]])
+            self.on_volume_interfaces = True
+        else:
+            self.surfaces = np.atleast_1d(surfaces)
+            self.on_volume_interfaces = False
+        
+        if weights is None:
+            self.weights = np.ones(self.surfaces.shape)
+        else:
+            self.weights = weights
+        assert len(self.weights) == len(self.surfaces)
+        super().__init__(depends_on=[spec])
+
+    # def recompute_bell(self, parent=None):
+    #     self.need_to_run_code = True
+
+    def compute(self):
+        """
+        Compute the quasisymmetry metric. This function returns an object
+        that contains (as attributes) all the intermediate quantities
+        for the calculation. Users do not need to call this function
+        for optimization; instead the :func:`residuals()` function can be
+        used. However, this function can be useful if users wish to
+        inspect the quantities going into the calculation.
+        """
+        spec = self.spec
+        spec.run()
+        if not spec.stellsym:
+            raise RuntimeError('Quasisymmetry class cannot yet handle non-stellarator-symmetric configs')
+
+        logger.debug('Evaluating quasisymmetry residuals')
+        ns = len(self.surfaces)
+        ntheta = self.ntheta
+        nphi = self.nphi
+        nfp = spec.nfp
+        d_psi_d_s = -self.spec.wout.phi[-1] / (2 * np.pi)
+
+        lvol = 0 # only the innermost spec volume
+
+        theta1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
+        phi1d = np.linspace(0, 2 * np.pi / nfp, nphi, endpoint=False)
+        # jacobian = sqrtg
+        Rarr0, Zarr0, sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=self.surfaces,tarr=theta1d, zarr=phi1d, derivative=True)
+        # B^s, B^theta, B^zeta
+        Bcontrav, dBcontrav = spec.results.get_B(lvol, sqrtg, sarr=self.surfaces, tarr=theta1d, zarr=phi1d, derivative=True)
+        Bcov = spec.results.get_B_covariant(Bcontrav, g)
+        modB, dmodB2 = spec.results.get_modB(Bcontrav, g, derivative=True, dBcontrav=dBcontrav, dg=dg)
+        # Chain rule: \nabla (|B^2|)^1/2 = 1/2 * |B^2|^-1/2 * \nabla |B^2| = 1/2 * |B|^-1 * \nabla |B^2|
+        # and \nabla |B^2| = dmodB2
+        dmodB = 0.5 / modB * dmodB2 
+
+        # bsubu = B^phi, bsubv = B^zeta
+        bsubs, bsubu, bsubv = Bcontrav
+        bsups, bsupu, bsupv = Bcov
+        d_B_d_s, d_B_d_theta, d_B_d_phi = dmodB
+
+
+        if self.on_volume_interfaces:
+            iota = spec.inputlist.iota
+            print("iota in QuasisymmetryRatioResidualSpec", iota)
+        else:
+            s_transform = spec.results.transform.fiota[0, :]
+            iota_transform = spec.results.transform.fiota[1, :]
+            # First, interpolate in s to get the quantities we need on the surfaces we need.
+            interp = interp1d(s_transform, iota_transform, fill_value="extrapolate")
+            iota = interp(self.surfaces)
+
+        # TODO: replace with current at different radial points
+        G = np.ones_like(self.surfaces) * spec.inputlist.curtor
+        I = np.ones_like(self.surfaces) * spec.inputlist.curpol
+
+        myshape = (ns, ntheta, nphi)
+        assert modB.shape == myshape
+        assert d_B_d_theta.shape == myshape
+        assert d_B_d_phi.shape == myshape
+        assert sqrtg.shape == myshape
+        assert bsubu.shape == myshape
+        assert bsubv.shape == myshape
+        assert bsupu.shape == myshape
+        assert bsupv.shape == myshape
+
+        # From here on, the code is copied from vmec_diagnostics.py QuasisymmetryRatioResidual
+
+        residuals3d = np.zeros(myshape)
+
+        B_dot_grad_B = bsupu * d_B_d_theta + bsupv * d_B_d_phi
+        B_cross_grad_B_dot_grad_psi = d_psi_d_s * (bsubu * d_B_d_phi - bsubv * d_B_d_theta) / sqrtg
+
+        dtheta = theta1d[1] - theta1d[0]
+        dphi = phi1d[1] - phi1d[0]
+        V_prime = nfp * dtheta * dphi * np.sum(sqrtg, axis=(1, 2))
+        # Check that we can evaluate the flux surface average <1> and the result is 1:
+        assert np.sum(np.abs(np.sqrt((1 / V_prime) * nfp * dtheta * dphi * np.sum(sqrtg, axis=(1, 2))) - 1)) < 1e-12
+
+        nn = self.helicity_n * nfp
+        for js in range(ns):
+            residuals3d[js, :, :] = np.sqrt(self.weights[js] * nfp * dtheta * dphi / V_prime[js] * sqrtg[js, :, :]) \
+                * (B_cross_grad_B_dot_grad_psi[js, :, :] * (nn - iota[js] * self.helicity_m) \
+                   - B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js])) \
+                / (modB[js, :, :] ** 3)
+
+        residuals1d = residuals3d.reshape((ns * ntheta * nphi,))
+        profile = np.sum(residuals3d * residuals3d, axis=(1, 2))
+        total = np.sum(residuals1d * residuals1d)
+
+        # Form a structure with all the intermediate data as attributes:
+        results = Struct()
+        variables = ['ns', 'ntheta', 'nphi', 'dtheta', 'dphi', 'nfp', 'V_prime', 'theta1d', 'phi1d',
+                     'd_psi_d_s', 'B_dot_grad_B',
+                     'B_cross_grad_B_dot_grad_psi', 'modB', 'd_B_d_theta', 'd_B_d_phi', 'sqrtg',
+                     'bsubu', 'bsubv', 'bsupu', 'bsupv', 'G', 'I', 'iota',
+                     'residuals3d', 'residuals1d', 'profile', 'total']
+        for v in variables:
+            results.__setattr__(v, eval(v))
+
+        logger.debug('Done evaluating quasisymmetry residuals')
+        return results
+
+    def residuals(self):
+        """
+        Evaluate the quasisymmetry metric in terms of a 1D numpy vector of
+        residuals, corresponding to :math:`R` in the documentation
+        for this class. This is the function to use when forming a
+        least-squares objective function.
+        """
+        results = self.compute()
+        return results.residuals1d
+
+    def profile(self):
+        """
+        Return the quasisymmetry metric in terms of a 1D radial
+        profile. The residuals :math:`R` are squared and summed over
+        theta and phi, but not over s. The total quasisymmetry error
+        :math:`f` returned by the :func:`total()` function is the sum
+        of the values in the profile returned by this function.
+        """
+        results = self.compute()
+        return results.profile
+
+    def total(self):
+        """
+        Evaluate the quasisymmetry metric in terms of the scalar total
+        :math:`f`.
+        """
+        results = self.compute()
+        return results.total
+
+
+def B_cartesian(spec:Spec,
+                quadpoints_phi=None,
+                quadpoints_theta=None,
+                range=Surface.RANGE_FULL_TORUS,
+                nphi=None,
+                ntheta=None):
+    r"""
+    Computes Cartesian vector components of the magnetic field on the
+    Spec boundary.  The results are returned on a grid in the Spec
+    toroidal and poloidal angles. This routine is required to compute
+    adjoint-based shape gradients and for the virtual casing
+    calculation.
+
+    There are two ways to define the grid points in the poloidal and
+    toroidal angles on which the field is returned.  The default
+    option, if ``quadpoints_phi``, ``quadpoints_theta``, ``nphi``, and
+    ``ntheta`` are all unspecified, is to use the quadrature grid
+    associated with the ``Surface`` object attached to
+    ``spec.boundary``.  The second option is that you can specify
+    custom ``phi`` and ``theta`` grids using the arguments
+    ``quadpoints_phi``, ``quadpoints_theta``, ``nphi``, ``ntheta``,
+    and ``range``, exactly as when initializing a ``Surface`` object.
+    For more details, see the documentation on :ref:`surfaces`.  Note
+    that both angles go up to 1, not :math:`2\pi`.
+
+    For now, this routine only works for stellarator symmetry.
+
+    Args:
+        spec: instance of Spec
+
+    Returns:
+        Tuple containing ``(Bx, By, Bz)``. Each of these three entries is a
+        2D array of size ``(numquadpoints_phi, numquadpoints_theta)``
+        containing the Cartesian component of the magnetic field on the Spec boundary surface.
+    """
+    spec.run()
+    nfp = spec.wout.nfp
+    if not spec.stellsym:
+        raise RuntimeError('B_cartesian presently only works for stellarator symmetry')
+
+    raise NotImplementedError('B_cartesian presently only works for Vmec equilibria')
+
+    if nphi is None and quadpoints_phi is None:
+        phi1D_1 = spec.boundary.quadpoints_phi
+    elif quadpoints_phi is None:
+        phi1D_1 = Surface.get_phi_quadpoints(range=range, nphi=nphi, nfp=spec.wout.nfp)
+    else:
+        phi1D_1 = quadpoints_phi
+
+    if ntheta is None and quadpoints_theta is None:
+        theta1D_1 = spec.boundary.quadpoints_theta
+    elif quadpoints_theta is None:
+        theta1D_1 = Surface.get_theta_quadpoints(ntheta=ntheta)
+    else:
+        theta1D_1 = quadpoints_theta
+
+    theta1D = np.array(theta1D_1) * 2 * np.pi
+    phi1D = np.array(phi1D_1) * 2 * np.pi
+
+    theta, phi = np.meshgrid(theta1D, phi1D)
+
+    # Get the tangent vectors using the gammadash1/2 functions from SurfaceRZFourier:
+    surf = SurfaceRZFourier(mpol=spec.wout.mpol, ntor=spec.wout.ntor, nfp=spec.wout.nfp,
+                            quadpoints_phi=phi1D_1, quadpoints_theta=theta1D_1)
+    for jmn in np.arange(spec.wout.mnmax):
+        surf.set_rc(int(spec.wout.xm[jmn]), int(spec.wout.xn[jmn] / nfp), spec.wout.rmnc[jmn, -1])
+        surf.set_zs(int(spec.wout.xm[jmn]), int(spec.wout.xn[jmn] / nfp), spec.wout.zmns[jmn, -1])
+    dgamma1 = surf.gammadash1()
+    dgamma2 = surf.gammadash2()
+
+    bsupumnc = 1.5 * spec.wout.bsupumnc[:, -1] - 0.5 * spec.wout.bsupumnc[:, -2]
+    bsupvmnc = 1.5 * spec.wout.bsupvmnc[:, -1] - 0.5 * spec.wout.bsupvmnc[:, -2]
+    angle = spec.wout.xm_nyq[:, None, None] * theta[None, :, :] \
+        - spec.wout.xn_nyq[:, None, None] * phi[None, :, :]
+    Bsupu = np.sum(bsupumnc[:, None, None] * np.cos(angle), axis=0)
+    Bsupv = np.sum(bsupvmnc[:, None, None] * np.cos(angle), axis=0)
+
+    Bx = (Bsupv * dgamma1[:, :, 0] + Bsupu * dgamma2[:, :, 0])/(2*np.pi)
+    By = (Bsupv * dgamma1[:, :, 1] + Bsupu * dgamma2[:, :, 1])/(2*np.pi)
+    Bz = (Bsupv * dgamma1[:, :, 2] + Bsupu * dgamma2[:, :, 2])/(2*np.pi)
+
+    return Bx, By, Bz
