@@ -56,7 +56,7 @@ else:
     MpiPartition = None
 
 
-__all__ = ['Spec', 'Residue']
+__all__ = ['Spec', 'Residue', 'QuasisymmetryRatioResidualSpec']
 
 
 class Spec(Optimizable):
