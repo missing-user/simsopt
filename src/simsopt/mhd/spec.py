@@ -1470,8 +1470,8 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         surfaces: Value of normalized toroidal flux at which you want the
           quasisymmetry error evaluated, or a list of values. Each
           value must be in the interval [0, 1], with 0 corresponding
-          to the magnetic axis and 1 to the SPEC plasma boundary. If None, 
-          it will use the array of tflux values in the Spec inputlist as surfaces. 
+          to the magnetic axis and 1 to the SPEC plasma boundary. If None,
+          it will use the array of tflux values in the Spec inputlist as surfaces.
           This parameter corresponds to :math:`s_j` above.
         helicity_m: Desired poloidal mode number :math:`M` in the magnetic field
           strength :math:`B`, so
@@ -1494,12 +1494,12 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
     """
 
     def __init__(self,
-                 spec: Spec,
-                 surfaces: np.ndarray = None,
-                 helicity_m: int = 1,
-                 helicity_n: int = 0,
-                 weights: np.ndarray = None,
-                 ntheta: int = 63,
+        spec: Spec,
+        surfaces: np.ndarray = None,
+        helicity_m: int = 1,
+        helicity_n: int = 0,
+        weights: np.ndarray = None,
+        ntheta: int = 63,
                  nphi: int = 64) -> None:
 
         self.spec = spec
@@ -1509,14 +1509,20 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         self.helicity_m = helicity_m
         self.helicity_n = helicity_n
 
-        
+
         if surfaces is None:
-            self.surfaces = np.array([spec.surfaces[0]])
-            self.on_volume_interfaces = True
+            flux = np.atleast_1d(spec.inputlist.tflux[: spec.nvol])
+            # In Fortran tflux is normalized so that tflux(Nvol) = 1.0, so tflux[-1]
+            normalized_toroidal_flux = flux / flux[-1]
+            self.surfaces = normalized_toroidal_flux
+            self.iota_on_volume_interfaces = True
         else:
             self.surfaces = np.atleast_1d(surfaces)
-            self.on_volume_interfaces = False
-        
+            self.iota_on_volume_interfaces = False
+        if (self.surfaces < 0).any() or (self.surfaces > 1).any():
+            raise ValueError("Surfaces for evaluating QuasisymmetryRatioResidual must be in the range s in [0, 1]")
+        logger.debug("Surfaces: %s", self.surfaces)
+
         if weights is None:
             self.weights = np.ones(self.surfaces.shape)
         else:
@@ -1539,38 +1545,68 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         spec = self.spec
         spec.run()
         if not spec.stellsym:
-            raise RuntimeError('Quasisymmetry class cannot yet handle non-stellarator-symmetric configs')
+            raise RuntimeError(
+                "Quasisymmetry class cannot yet handle non-stellarator-symmetric configs"
+            )
 
         logger.debug('Evaluating quasisymmetry residuals')
         ns = len(self.surfaces)
         ntheta = self.ntheta
         nphi = self.nphi
         nfp = spec.nfp
-        d_psi_d_s = -self.spec.wout.phi[-1] / (2 * np.pi)
+        d_psi_d_s = -self.spec.inputlist.phiedge / (2 * np.pi)
 
-        lvol = 0 # only the innermost spec volume
+        flux = np.atleast_1d(spec.inputlist.tflux[: spec.nvol])
+        # In Fortran tflux is normalized so that tflux(Nvol) = 1.0, so tflux[-1]
+        normalized_toroidal_flux = flux / flux[-1]
+        if self.iota_on_volume_interfaces:
+            self.surfaces = normalized_toroidal_flux
 
-        theta1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
-        phi1d = np.linspace(0, 2 * np.pi / nfp, nphi, endpoint=False)
-        # jacobian = sqrtg
-        Rarr0, Zarr0, sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=self.surfaces,tarr=theta1d, zarr=phi1d, derivative=True)
-        # B^s, B^theta, B^zeta
-        Bcontrav, dBcontrav = spec.results.get_B(lvol, sqrtg, sarr=self.surfaces, tarr=theta1d, zarr=phi1d, derivative=True)
-        Bcov = spec.results.get_B_covariant(Bcontrav, g)
+        # Closed interval [0, 1] for s
+        min_tflux = 0.0 - np.finfo(float).eps
+        for lvol, max_tflux in zip(range(spec.nvol), normalized_toroidal_flux):
+            # Find all surfaces that are in the current volume (<= max_tflux)
+            s_in_volume_bounds = self.surfaces[
+                (self.surfaces <= max_tflux) & (self.surfaces > min_tflux )
+            ]
+            local_s = interp1d([min_tflux, max_tflux], [-1.0, 1.0], bounds_error=True)(
+                s_in_volume_bounds
+            )
+            min_tflux = max_tflux
+
+            theta1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
+            phi1d = np.linspace(0, 2 * np.pi / nfp, nphi, endpoint=False)
+            # jacobian = sqrtg
+        Rarr0, Zarr0, sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=local_s,tarr=theta1d, zarr=phi1d, derivative=True)
+            # B^s, B^theta, B^zeta
+        Bcontrav, dBcontrav = spec.results.get_B(lvol, sqrtg, sarr=local_s, tarr=theta1d, zarr=phi1d, derivative=True)
+            Bcov = spec.results.get_B_covariant(Bcontrav, g)
         modB, dmodB2 = spec.results.get_modB(Bcontrav, g, derivative=True, dBcontrav=dBcontrav, dg=dg)
-        # Chain rule: \nabla (|B^2|)^1/2 = 1/2 * |B^2|^-1/2 * \nabla |B^2| = 1/2 * |B|^-1 * \nabla |B^2|
-        # and \nabla |B^2| = dmodB2
-        dmodB = 0.5 / modB * dmodB2 
+            # Chain rule: \nabla (|B^2|)^1/2 = 1/2 * |B^2|^-1/2 * \nabla |B^2| = 1/2 * |B|^-1 * \nabla |B^2|
+            # and \nabla |B^2| = dmodB2
+            dmodB = np.einsum("...i,...ij->...ij", 0.5 / modB, dmodB2)
 
-        # bsubu = B^phi, bsubv = B^zeta
-        bsubs, bsubu, bsubv = Bcontrav
-        bsups, bsupu, bsupv = Bcov
-        d_B_d_s, d_B_d_theta, d_B_d_phi = dmodB
+            # bsups = B^s, bsupu = B^phi, bsupv = B^zeta
+            if "bsupu" not in locals():
+                bsupu, bsupv = Bcontrav[..., 1], Bcontrav[..., 2]
+                bsubu, bsubv = Bcov[..., 1], Bcov[..., 2]
+                d_B_d_theta, d_B_d_phi = dmodB[..., 1], dmodB[..., 2]
+            else:
+                bsupu = np.concatenate((bsupu, Bcontrav[..., 1]), axis=0)
+                bsupv = np.concatenate((bsupv, Bcontrav[..., 2]), axis=0)
+                bsubu = np.concatenate((bsubu, Bcov[..., 1]), axis=0)
+                bsubv = np.concatenate((bsubv, Bcov[..., 2]), axis=0)
+                d_B_d_theta = np.concatenate((d_B_d_theta, dmodB[..., 1]), axis=0)
+                d_B_d_phi = np.concatenate((d_B_d_phi, dmodB[..., 2]), axis=0)
 
-
-        if self.on_volume_interfaces:
-            iota = spec.inputlist.iota
-            print("iota in QuasisymmetryRatioResidualSpec", iota)
+        # Either get the prescribed iota or the iota from poincae output, depending on the setting
+        if self.iota_on_volume_interfaces or not hasattr(spec.results, "transform") or np.shape(spec.results.transform.fiota)[1] <= 1: 
+            # Include iota on axis
+            iota = spec.inputlist.iota[: spec.nvol + 1]
+            interface_positions_s = np.pad(normalized_toroidal_flux, (1, 0))
+            assert iota.shape == interface_positions_s.shape
+            interp = interp1d(interface_positions_s, iota, fill_value="extrapolate")
+            iota = interp(self.surfaces)
         else:
             s_transform = spec.results.transform.fiota[0, :]
             iota_transform = spec.results.transform.fiota[1, :]
@@ -1579,8 +1615,9 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             iota = interp(self.surfaces)
 
         # TODO: replace with current at different radial points
-        G = np.ones_like(self.surfaces) * spec.inputlist.curtor
-        I = np.ones_like(self.surfaces) * spec.inputlist.curpol
+        # TODO: Why does spec.poloidal_current_amperes expist, isn't curpol already in Ampere?
+        G = np.ones_like(self.surfaces) * spec.inputlist.curtor  # Should be Ampere
+        I = np.ones_like(self.surfaces) * spec.inputlist.curpol  # Should be Ampere
 
         myshape = (ns, ntheta, nphi)
         assert modB.shape == myshape
@@ -1611,7 +1648,7 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
                 * (B_cross_grad_B_dot_grad_psi[js, :, :] * (nn - iota[js] * self.helicity_m) \
                    - B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js])) \
                 / (modB[js, :, :] ** 3)
-
+        
         residuals1d = residuals3d.reshape((ns * ntheta * nphi,))
         profile = np.sum(residuals3d * residuals3d, axis=(1, 2))
         total = np.sum(residuals1d * residuals1d)
