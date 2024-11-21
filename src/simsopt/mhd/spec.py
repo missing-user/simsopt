@@ -1577,11 +1577,11 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             theta1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
             phi1d = np.linspace(0, 2 * np.pi / nfp, nphi, endpoint=False)
             # jacobian = sqrtg
-        Rarr0, Zarr0, sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=local_s,tarr=theta1d, zarr=phi1d, derivative=True)
+            Rarr0, Zarr0, sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=local_s,tarr=theta1d, zarr=phi1d, derivative=True)
             # B^s, B^theta, B^zeta
-        Bcontrav, dBcontrav = spec.results.get_B(lvol, sqrtg, sarr=local_s, tarr=theta1d, zarr=phi1d, derivative=True)
+            Bcontrav, dBcontrav = spec.results.get_B(lvol, sqrtg, sarr=local_s, tarr=theta1d, zarr=phi1d, derivative=True)
             Bcov = spec.results.get_B_covariant(Bcontrav, g)
-        modB, dmodB2 = spec.results.get_modB(Bcontrav, g, derivative=True, dBcontrav=dBcontrav, dg=dg)
+            modB, dmodB2 = spec.results.get_modB(Bcontrav, g, derivative=True, dBcontrav=dBcontrav, dg=dg)
             # Chain rule: \nabla (|B^2|)^1/2 = 1/2 * |B^2|^-1/2 * \nabla |B^2| = 1/2 * |B|^-1 * \nabla |B^2|
             # and \nabla |B^2| = dmodB2
             dmodB = np.einsum("...i,...ij->...ij", 0.5 / modB, dmodB2)
