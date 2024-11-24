@@ -1232,6 +1232,191 @@ class Spec(Optimizable):
         self.run()
         return self.results.transform.fiota[1, 0]
     
+
+    def vacuum_well(self):
+        """
+        Compute a single number W that summarizes the vacuum magnetic well,
+        given by the formula
+
+        W = (dV/ds(s=0) - dV/ds(s=1)) / (dV/ds(s=0)
+
+        where dVds is the derivative of the flux surface volume with
+        respect to the radial coordinate s. Positive values of W are
+        favorable for stability to interchange modes. This formula for
+        W is motivated by the fact that
+
+        d^2 V / d s^2 < 0
+
+        is favorable for stability. Integrating over s from 0 to 1
+        and normalizing gives the above formula for W. Notice that W
+        is dimensionless, and it scales as the square of the minor
+        radius. To compute dV/ds, we use the py_spec package to get 
+        d/ds sqrtg, compute dV/ds by integrating over the flux surface and
+        take the finite differences dV/ds(s=0) - dV/ds(s=1).
+        
+        """
+        self.run()
+
+
+        
+        def get_sqrtg_fourier(lvol=0, sarr=np.linspace(1, 1, 1), tarr=np.linspace(0, 0, 1), zarr=np.linspace(0, 0, 1), input1D=False, derivative=False):
+            nax = np.newaxis
+            sym = self.inputlist.istellsym == 1
+
+            Rac, Rbc = self.results.output.Rbc[lvol : lvol + 2]
+            Ras, Rbs = self.results.output.Rbs[lvol : lvol + 2]
+            Zas, Zbs = self.results.output.Zbs[lvol : lvol + 2]
+            Zac, Zbc = self.results.output.Zbc[lvol : lvol + 2]
+
+            mn = Rac.size  # s.output.mn
+            im = self.results.output.im
+            in_ = self.results.output.in_    
+            #sbar = (sarr + 1) / 2
+            sbar = np.divide(np.add(sarr, 1.0), 2.0)
+            fac = []
+
+            # We are only iterested in m=0, n=0
+            sin = 0
+            cos = 1
+
+            Igeometry = self.inputlist.igeometry
+            rpol = self.inputlist.rpol
+            rtor = self.inputlist.rtor
+
+            assert im.shape[0] == mn
+            assert len(im.shape) == 1
+            assert in_.shape[0] == mn
+            assert Rbc.shape[0] == mn
+
+
+            if Igeometry == 1:
+                for j in range(mn):
+                    fac.append([sbar, 0.5 * np.ones(sarr.size), np.zeros(sarr.size)])
+            elif Igeometry == 2:
+                for j in range(mn):
+                    if lvol > 0 or im[j] == 0:
+                        fac.append([sbar, 0.5 * np.ones(sarr.size), np.zeros(sarr.size)])
+                    else:
+                        fac.append(
+                            [
+                                sbar ** (im[j] + 1.0),
+                                (im[j] + 1.0) / 2.0 * sbar ** (im[j]),
+                                (im[j] + 1.0) * (im[j]) / 4.0 * sbar ** (im[j] - 1),
+                            ]
+                        )
+            elif Igeometry == 3:
+                for j in range(mn):
+                    if lvol == 0 and im[j] == 0:
+                        fac.append([sbar ** 2, sbar, 0.5 * np.ones(sarr.size)])
+                    elif lvol == 0 and im[j] > 0:
+                        fac.append(
+                            [
+                                sbar ** im[j],
+                                (im[j] / 2.0) * sbar ** (im[j] - 1.0),
+                                (im[j] * (im[j] - 1) / 4.0) * sbar ** (im[j] - 2.0),
+                            ]
+                        )
+                    else:
+                        fac.append([sbar, 0.5 * np.ones(sarr.size), np.zeros(sarr.size)])
+            # now fac has the dimension (number of modes, number of derivatives, number of s points)
+            fac = np.array(fac)
+            # transpose to (number of derivatives, number of modes, number of s points)
+            fac = np.moveaxis(np.array(fac), 0, 1)
+
+            if not input1D:
+                im = im[:, nax]
+                in_ = in_[:, nax]
+
+                Rac = Rac[:, nax]
+                Rbc = Rbc[:, nax]
+                Zas = Zas[:, nax]
+                Zbs = Zbs[:, nax]
+                if not sym:
+                    Ras = Ras[:, nax]
+                    Rbs = Rbs[:, nax]
+                    Zac = Zac[:, nax]
+                    Zbc = Zbc[:, nax]
+
+            dR1 = Rac + fac[0] * (Rbc - Rac)
+            Rarr0 = dR1 * cos
+
+            Rarr1 = fac[1] * (Rbc - Rac) * cos
+            Rarr2 = -im * dR1 * sin
+            
+            # We only need Z for Igeometry=3
+            if Igeometry == 3:
+                dZ1 = Zas + fac[0] * (Zbs - Zas)
+                Zarr1 = fac[1] * (Zbs - Zas) * sin
+                Zarr2 = im * dZ1 * cos
+            else:
+                Zarr0 = None
+
+            if Igeometry == 1:
+                jacobian = Rarr1 * rpol * rtor
+            elif Igeometry == 2:
+                jacobian = Rarr1 * Rarr0
+            elif Igeometry == 3:
+                jacobian = Rarr0 * (Rarr2 * Zarr1 - Rarr1 * Zarr2)  # from matlab
+            
+            # for the inner and outer edge of this lvol
+            return jacobian 
+
+        # TODO: get these from the inputlist
+        nt = 64
+        nz = 64
+
+        tarr = np.linspace(0, 2*np.pi, nt, endpoint=True)
+        zarr = np.linspace(0, 2*np.pi / self.nfp, nz, endpoint=True)
+
+        flux = np.atleast_1d(spec.inputlist.tflux[: self.nvol])
+        # In Fortran tflux is normalized so that tflux(Nvol) = 1.0, so tflux[-1]
+        # Get the flux per volume and weigh the contributions accordingly
+        flux_per_volume = np.diff(flux, prepend=0) / flux[-1]
+
+        # Integrate
+        dt = tarr[1]-tarr[0]
+        dz = zarr[1]-zarr[0]
+        ds = 1e-3
+
+        def dVds(ivol:int, s:float):
+            j = self.results.jacobian(lvol=ivol, sarr=np.array([s-ds, s+ds]), tarr=tarr, zarr=zarr)
+            volume = self.nfp * np.sum(j)*dt*dz*ds
+            return volume / (2*ds)
+ 
+        # Remapping from [-1,1] to [flux(s=-1), flux(s=1)]
+        dVds_s0 = dVds(ivol=self.nvol-1, s=-1+ds) / flux_per_volume[self.nvol-1]*2
+        dVds_s1 = dVds(ivol=self.nvol-1, s=1-ds) / flux_per_volume[self.nvol-1]*2
+
+        well = (dVds_s0 - dVds_s1) / dVds_s0
+        return well
+
+        # Compute vacuum well for each volume
+        well = np.zeros(self.nvol)
+        for ivol in range(self.nvol):
+            # derivatives of sqrtg on the inner and outer edge. 
+            # TODO: Ideally, we only need <d sqrtg/ds> averaged over the flux surface, i.e. sqrtg[0,0] in fourier representation.  
+            _, _, jac, g, djacobian, _ = self.results.get_grid_and_jacobian_and_metric(lvol=ivol, sarr=np.array([-0.99, 1]), tarr=tarr, zarr=zarr, derivative=True)
+            
+            def surface_integral(array:np.ndarray):
+                return np.sum(array)*dt*dz
+            
+            dVds_s0 =  surface_integral(djacobian[0,...,0])
+            dVds_s1 =  surface_integral(djacobian[1,...,0])
+            well[ivol] = (dVds_s0 - dVds_s1) / dVds_s0
+
+            gmnc00 = get_sqrtg_fourier(lvol=ivol, sarr=np.array([-0.99, 1]), tarr=tarr, zarr=zarr, derivative=True)
+            dVds = 4 * np.pi * np.pi * np.abs(gmnc00[0, 1:])
+
+            # assert dVds_s0 == dVds[0]
+            # assert dVds_s1 == dVds[-1]
+            dVds_s0 = dVds[0]
+            dVds_s1 = dVds[-1]
+
+
+        
+        weighted_well =  well # * flux_per_volume
+        return weighted_well
+    
     def array_translator(self, array=None, style='spec'):
         """
         Returns a SpecFourierArray object to help transforming between
@@ -1548,7 +1733,7 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             raise RuntimeError(
                 "Quasisymmetry class cannot yet handle non-stellarator-symmetric configs"
             )
-
+        
         logger.debug('Evaluating quasisymmetry residuals')
         ns = len(self.surfaces)
         ntheta = self.ntheta
@@ -1562,42 +1747,73 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         if self.iota_on_volume_interfaces:
             self.surfaces = normalized_toroidal_flux
 
+        bsupu = []
+        bsupv = []
+        bsubu = []
+        bsubv = []
+        d_B_d_theta = []
+        d_B_d_phi = []
+        modB = []
+        sqrtg = []
+
+        flux_modified_weights = self.weights.copy()
+
         # Closed interval [0, 1] for s
         min_tflux = 0.0 - np.finfo(float).eps
         for lvol, max_tflux in zip(range(spec.nvol), normalized_toroidal_flux):
             # Find all surfaces that are in the current volume (<= max_tflux)
-            s_in_volume_bounds = self.surfaces[
-                (self.surfaces <= max_tflux) & (self.surfaces > min_tflux )
-            ]
+            mask = (self.surfaces <= max_tflux) & (self.surfaces > min_tflux )
+            s_in_volume_bounds = self.surfaces[mask]
+            # Due to rescaling of s=[-1,1] range of the chebyshev basis in SPEC to the flux coordinate range
+            # flux_modified_weights[mask] *= (max_tflux - min_tflux)
+
             local_s = interp1d([min_tflux, max_tflux], [-1.0, 1.0], bounds_error=True)(
                 s_in_volume_bounds
             )
             min_tflux = max_tflux
+            if len(local_s) == 0:
+                continue
 
             theta1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
             phi1d = np.linspace(0, 2 * np.pi / nfp, nphi, endpoint=False)
             # jacobian = sqrtg
-            Rarr0, Zarr0, sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=local_s,tarr=theta1d, zarr=phi1d, derivative=True)
+            Rarr0, Zarr0, local_sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=local_s,tarr=theta1d, zarr=phi1d, derivative=True)
+            computed_sqrtg = np.sqrt(np.linalg.det(g.reshape((-1,3,3))))
+            assert np.allclose(local_sqrtg, computed_sqrtg.reshape(local_sqrtg.shape))
+            # local_sqrtg = local_sqrtg / s_in_volume_bounds[:,None,None]
+
             # B^s, B^theta, B^zeta
-            Bcontrav, dBcontrav = spec.results.get_B(lvol, sqrtg, sarr=local_s, tarr=theta1d, zarr=phi1d, derivative=True)
+            Bcontrav, dBcontrav = spec.results.get_B(lvol, local_sqrtg, sarr=local_s, tarr=theta1d, zarr=phi1d, derivative=True)
             Bcov = spec.results.get_B_covariant(Bcontrav, g)
-            modB, dmodB2 = spec.results.get_modB(Bcontrav, g, derivative=True, dBcontrav=dBcontrav, dg=dg)
+            local_modB, dmodB2 = spec.results.get_modB(Bcontrav, g, derivative=True, dBcontrav=dBcontrav, dg=dg)
             # Chain rule: \nabla (|B^2|)^1/2 = 1/2 * |B^2|^-1/2 * \nabla |B^2| = 1/2 * |B|^-1 * \nabla |B^2|
             # and \nabla |B^2| = dmodB2
-            dmodB = np.einsum("...i,...ij->...ij", 0.5 / modB, dmodB2)
+            dmodB = np.einsum("...i,...ij->...ij", 0.5 / local_modB, dmodB2)
+            
+            # This means that some surfaces are intersecting
+            if np.any(local_sqrtg < 0):
+                raise ObjectiveFailure("QuasisymmetryRatioResidualSpec failed, sqrtg < 0, Some surfaces are intersecting")
 
             # bsups = B^s, bsupu = B^phi, bsupv = B^zeta
-            if "bsupu" not in locals():
-                bsupu, bsupv = Bcontrav[..., 1], Bcontrav[..., 2]
-                bsubu, bsubv = Bcov[..., 1], Bcov[..., 2]
-                d_B_d_theta, d_B_d_phi = dmodB[..., 1], dmodB[..., 2]
-            else:
-                bsupu = np.concatenate((bsupu, Bcontrav[..., 1]), axis=0)
-                bsupv = np.concatenate((bsupv, Bcontrav[..., 2]), axis=0)
-                bsubu = np.concatenate((bsubu, Bcov[..., 1]), axis=0)
-                bsubv = np.concatenate((bsubv, Bcov[..., 2]), axis=0)
-                d_B_d_theta = np.concatenate((d_B_d_theta, dmodB[..., 1]), axis=0)
-                d_B_d_phi = np.concatenate((d_B_d_phi, dmodB[..., 2]), axis=0)
+            bsupu.append(Bcontrav[..., 1])
+            bsupv.append(Bcontrav[..., 2])
+            bsubu.append(Bcov[..., 1])
+            bsubv.append(Bcov[..., 2])
+            d_B_d_theta.append(dmodB[..., 1])
+            d_B_d_phi.append(dmodB[..., 2])
+            modB.append(local_modB)
+            sqrtg.append(-1 * local_sqrtg)
+
+        assert len(bsupu) > 0 
+
+        bsupu = np.concatenate(bsupu, axis=0)
+        bsupv = np.concatenate(bsupv, axis=0)
+        bsubu = np.concatenate(bsubu, axis=0)
+        bsubv = np.concatenate(bsubv, axis=0)
+        d_B_d_theta = np.concatenate(d_B_d_theta, axis=0)
+        d_B_d_phi = np.concatenate(d_B_d_phi, axis=0)
+        modB = np.concatenate(modB, axis=0)
+        sqrtg = np.concatenate(sqrtg, axis=0)
 
         # Either get the prescribed iota or the iota from poincae output, depending on the setting
         if self.iota_on_volume_interfaces or not hasattr(spec.results, "transform") or np.shape(spec.results.transform.fiota)[1] <= 1: 
@@ -1608,11 +1824,15 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             interp = interp1d(interface_positions_s, iota, fill_value="extrapolate")
             iota = interp(self.surfaces)
         else:
-            s_transform = spec.results.transform.fiota[0, :]
-            iota_transform = spec.results.transform.fiota[1, :]
-            # First, interpolate in s to get the quantities we need on the surfaces we need.
-            interp = interp1d(s_transform, iota_transform, fill_value="extrapolate")
-            iota = interp(self.surfaces)
+            s_transform = spec.results.transform.fiota[0, spec.results.poincare.success == 1]
+            iota_transform = spec.results.transform.fiota[1, spec.results.poincare.success == 1]
+            # If the field line integration fails, we don't have any valid iota values. prevent NaN
+            if len(iota_transform) <= 1:
+                raise ObjectiveFailure("QuasisymmetryRatioResidualSpec failed, could not find iota values")
+            else:
+                # First, interpolate in s to get the quantities we need on the surfaces we need.
+                interp = interp1d(s_transform, iota_transform, fill_value="extrapolate")
+                iota = interp(self.surfaces)
 
         # TODO: replace with current at different radial points
         # TODO: Why does spec.poloidal_current_amperes expist, isn't curpol already in Ampere?
@@ -1621,16 +1841,15 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
 
         myshape = (ns, ntheta, nphi)
         assert modB.shape == myshape
+        assert sqrtg.shape == myshape
         assert d_B_d_theta.shape == myshape
         assert d_B_d_phi.shape == myshape
-        assert sqrtg.shape == myshape
         assert bsubu.shape == myshape
         assert bsubv.shape == myshape
         assert bsupu.shape == myshape
         assert bsupv.shape == myshape
 
         # From here on, the code is copied from vmec_diagnostics.py QuasisymmetryRatioResidual
-
         residuals3d = np.zeros(myshape)
 
         B_dot_grad_B = bsupu * d_B_d_theta + bsupv * d_B_d_phi
@@ -1644,14 +1863,54 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
 
         nn = self.helicity_n * nfp
         for js in range(ns):
-            residuals3d[js, :, :] = np.sqrt(self.weights[js] * nfp * dtheta * dphi / V_prime[js] * sqrtg[js, :, :]) \
+            residuals3d[js, :, :] = np.sqrt(flux_modified_weights[js] * nfp * dtheta * dphi / V_prime[js] * sqrtg[js, :, :]) \
                 * (B_cross_grad_B_dot_grad_psi[js, :, :] * (nn - iota[js] * self.helicity_m) \
                    - B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js])) \
                 / (modB[js, :, :] ** 3)
         
+        import matplotlib.pyplot as plt
+        plotvariables = {
+            # "modB": modB,
+            # "d_B_d_theta": d_B_d_theta,
+            # "d_B_d_phi": d_B_d_phi,
+            # "bsubv": bsubv,
+            # "bsupv": bsupv,
+            "sqrtg": sqrtg[0],
+            "sqrtg1": sqrtg[3],
+            # "sqrtg2": sqrtg[16],
+            # "sqrtg3": sqrtg[32],
+            # "sqrtg4": sqrtg[48],
+            "sqrtg5": sqrtg[-1],
+            "residuals3d": residuals3d[-1]
+        }
+        fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(12, 6))
+        for key, val, ax in zip(plotvariables.keys(), plotvariables.values(), axs.flatten()):
+            pcm = ax.imshow(val, origin="lower")
+            ax.set_title(key)
+            fig.colorbar(pcm, ax=ax)
+        plt.tight_layout()
+        plt.text(0.5, 0.95, "SPEC", horizontalalignment="center", verticalalignment="center")
+        plt.suptitle("SPEC")
+        plt.show()
+        
+        # from scipy import integrate
+        # # Create coordinate grid
+        # tarr = theta1d
+        # zarr = phi1d
+        # sarr = self.surfaces
+        # # Get jacobian
+        # j = sqrtg
+        # print("spec volume from sqrtg", nfp * integrate.simpson( y=integrate.simpson( y=integrate.simpson( y=j, x=zarr ), x=tarr ), x=sarr ))
+
+
+
+        if np.isnan(residuals3d).any():
+            raise ObjectiveFailure("QuasisymmetryRatioResidualSpec failed")
+        
         residuals1d = residuals3d.reshape((ns * ntheta * nphi,))
         profile = np.sum(residuals3d * residuals3d, axis=(1, 2))
         total = np.sum(residuals1d * residuals1d)
+
 
         # Form a structure with all the intermediate data as attributes:
         results = Struct()
@@ -1694,87 +1953,3 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         """
         results = self.compute()
         return results.total
-
-
-def B_cartesian(spec:Spec,
-                quadpoints_phi=None,
-                quadpoints_theta=None,
-                range=Surface.RANGE_FULL_TORUS,
-                nphi=None,
-                ntheta=None):
-    r"""
-    Computes Cartesian vector components of the magnetic field on the
-    Spec boundary.  The results are returned on a grid in the Spec
-    toroidal and poloidal angles. This routine is required to compute
-    adjoint-based shape gradients and for the virtual casing
-    calculation.
-
-    There are two ways to define the grid points in the poloidal and
-    toroidal angles on which the field is returned.  The default
-    option, if ``quadpoints_phi``, ``quadpoints_theta``, ``nphi``, and
-    ``ntheta`` are all unspecified, is to use the quadrature grid
-    associated with the ``Surface`` object attached to
-    ``spec.boundary``.  The second option is that you can specify
-    custom ``phi`` and ``theta`` grids using the arguments
-    ``quadpoints_phi``, ``quadpoints_theta``, ``nphi``, ``ntheta``,
-    and ``range``, exactly as when initializing a ``Surface`` object.
-    For more details, see the documentation on :ref:`surfaces`.  Note
-    that both angles go up to 1, not :math:`2\pi`.
-
-    For now, this routine only works for stellarator symmetry.
-
-    Args:
-        spec: instance of Spec
-
-    Returns:
-        Tuple containing ``(Bx, By, Bz)``. Each of these three entries is a
-        2D array of size ``(numquadpoints_phi, numquadpoints_theta)``
-        containing the Cartesian component of the magnetic field on the Spec boundary surface.
-    """
-    spec.run()
-    nfp = spec.wout.nfp
-    if not spec.stellsym:
-        raise RuntimeError('B_cartesian presently only works for stellarator symmetry')
-
-    raise NotImplementedError('B_cartesian presently only works for Vmec equilibria')
-
-    if nphi is None and quadpoints_phi is None:
-        phi1D_1 = spec.boundary.quadpoints_phi
-    elif quadpoints_phi is None:
-        phi1D_1 = Surface.get_phi_quadpoints(range=range, nphi=nphi, nfp=spec.wout.nfp)
-    else:
-        phi1D_1 = quadpoints_phi
-
-    if ntheta is None and quadpoints_theta is None:
-        theta1D_1 = spec.boundary.quadpoints_theta
-    elif quadpoints_theta is None:
-        theta1D_1 = Surface.get_theta_quadpoints(ntheta=ntheta)
-    else:
-        theta1D_1 = quadpoints_theta
-
-    theta1D = np.array(theta1D_1) * 2 * np.pi
-    phi1D = np.array(phi1D_1) * 2 * np.pi
-
-    theta, phi = np.meshgrid(theta1D, phi1D)
-
-    # Get the tangent vectors using the gammadash1/2 functions from SurfaceRZFourier:
-    surf = SurfaceRZFourier(mpol=spec.wout.mpol, ntor=spec.wout.ntor, nfp=spec.wout.nfp,
-                            quadpoints_phi=phi1D_1, quadpoints_theta=theta1D_1)
-    for jmn in np.arange(spec.wout.mnmax):
-        surf.set_rc(int(spec.wout.xm[jmn]), int(spec.wout.xn[jmn] / nfp), spec.wout.rmnc[jmn, -1])
-        surf.set_zs(int(spec.wout.xm[jmn]), int(spec.wout.xn[jmn] / nfp), spec.wout.zmns[jmn, -1])
-    dgamma1 = surf.gammadash1()
-    dgamma2 = surf.gammadash2()
-
-    bsupumnc = 1.5 * spec.wout.bsupumnc[:, -1] - 0.5 * spec.wout.bsupumnc[:, -2]
-    bsupvmnc = 1.5 * spec.wout.bsupvmnc[:, -1] - 0.5 * spec.wout.bsupvmnc[:, -2]
-    angle = spec.wout.xm_nyq[:, None, None] * theta[None, :, :] \
-        - spec.wout.xn_nyq[:, None, None] * phi[None, :, :]
-    Bsupu = np.sum(bsupumnc[:, None, None] * np.cos(angle), axis=0)
-    Bsupv = np.sum(bsupvmnc[:, None, None] * np.cos(angle), axis=0)
-
-    Bx = (Bsupv * dgamma1[:, :, 0] + Bsupu * dgamma2[:, :, 0])/(2*np.pi)
-    By = (Bsupv * dgamma1[:, :, 1] + Bsupu * dgamma2[:, :, 1])/(2*np.pi)
-    Bz = (Bsupv * dgamma1[:, :, 2] + Bsupu * dgamma2[:, :, 2])/(2*np.pi)
-
-    return Bx, By, Bz

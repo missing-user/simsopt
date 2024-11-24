@@ -223,6 +223,7 @@ class QuasisymmetryRatioResidual(Optimizable):
             bsupu += np.kron(bsupumnc[jmn, :].reshape((ns, 1, 1)), cosangle)
             bsupv += np.kron(bsupvmnc[jmn, :].reshape((ns, 1, 1)), cosangle)
 
+
         B_dot_grad_B = bsupu * d_B_d_theta + bsupv * d_B_d_phi
         B_cross_grad_B_dot_grad_psi = d_psi_d_s * (bsubu * d_B_d_phi - bsubv * d_B_d_theta) / sqrtg
 
@@ -242,6 +243,47 @@ class QuasisymmetryRatioResidual(Optimizable):
         residuals1d = residuals3d.reshape((ns * ntheta * nphi,))
         profile = np.sum(residuals3d * residuals3d, axis=(1, 2))
         total = np.sum(residuals1d * residuals1d)
+
+
+        import matplotlib.pyplot as plt
+        plotvariables = {
+            # "modB": modB,
+            # "d_B_d_theta": d_B_d_theta,
+            # "d_B_d_phi": d_B_d_phi,
+            # "bsubv": bsubv,
+            # "bsupv": bsupv,
+            # "g00": g[0,0],
+            # "g01": g[0,1],
+            # "g11": g[1,1],
+            # "g21": g[2,1],
+            # "g22": g[2,2],
+            # "bsupv": bsupv,
+            "sqrtg": sqrtg[0],
+            "sqrtg1": sqrtg[3],
+            # "sqrtg2": sqrtg[16],
+            # "sqrtg3": sqrtg[32],
+            # "sqrtg4": sqrtg[48],
+            "sqrtg5": sqrtg[-1],
+            "residuals3d": residuals3d[-1]
+        }
+        fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(12, 6))
+        for key, val, ax in zip(plotvariables.keys(), plotvariables.values(), axs.flatten()):
+            pcm = ax.imshow(val, origin="lower")
+            ax.set_title(key)
+            fig.colorbar(pcm, ax=ax)
+        plt.tight_layout()
+        plt.suptitle("VMEC")
+        plt.show()
+
+        from scipy import integrate
+        # Create coordinate grid
+        tarr = theta1d
+        zarr = phi1d
+        sarr = self.surfaces
+        # Get jacobian
+        j = sqrtg
+        print("vmec volume from sqrtg", nfp * integrate.simpson( y=integrate.simpson( y=integrate.simpson( y=j, x=zarr ), x=tarr ), x=sarr ))
+
 
         # Form a structure with all the intermediate data as attributes:
         results = Struct()
