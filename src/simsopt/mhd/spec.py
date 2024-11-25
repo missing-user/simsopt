@@ -1809,7 +1809,7 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             d_B_d_theta.append(dmodB[..., 1])
             d_B_d_phi.append(dmodB[..., 2])
             modB.append(local_modB)
-            sqrtg.append(-1 * local_sqrtg)
+            sqrtg.append(local_sqrtg)
 
         assert len(bsupu) > 0 
 
@@ -1902,11 +1902,6 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         plt.suptitle("SPEC")
         # plt.show()
         
-        from scipy import integrate
-        print("spec volume from sqrtg", nfp * integrate.simpson( y=integrate.simpson( y=integrate.simpson( y=sqrtg, x=phi1d ), x=theta1d ) * ds, x=self.surfaces ))
-        vols = np.array([spec.results.get_volume(ivol, ns=32) for ivol in range(spec.nvol)]) 
-        print("Volume Using py_spec",sum(vols), vols)
-
 
         if np.isnan(residuals3d).any():
             raise ObjectiveFailure("QuasisymmetryRatioResidualSpec failed")
@@ -1922,7 +1917,7 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
                      'd_psi_d_s', 'B_dot_grad_B',
                      'B_cross_grad_B_dot_grad_psi', 'modB', 'd_B_d_theta', 'd_B_d_phi', 'sqrtg',
                      'bsubu', 'bsubv', 'bsupu', 'bsupv', 'G', 'I', 'iota',
-                     'residuals3d', 'residuals1d', 'profile', 'total']
+                     'residuals3d', 'residuals1d', 'profile', 'total', "d_psi_d_s","ds"]
         for v in variables:
             results.__setattr__(v, eval(v))
 
