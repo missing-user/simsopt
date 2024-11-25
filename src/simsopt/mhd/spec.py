@@ -1740,6 +1740,10 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         nphi = self.nphi
         nfp = spec.nfp
         d_psi_d_s = -self.spec.inputlist.phiedge / (2 * np.pi)
+        import warnings
+        # FIXME: only for nvol = 1
+        d_psi_d_s = 2 * d_psi_d_s # 2 is the differential element for change of variables from s[-1, 1] to s[0, 1] d_psi_d_s 
+        warnings.warn("d_psi_d_s is not correct for nvol > 1")
 
         flux = np.atleast_1d(spec.inputlist.tflux[: spec.nvol])
         # In Fortran tflux is normalized so that tflux(Nvol) = 1.0, so tflux[-1]
@@ -1756,8 +1760,8 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         modB = []
         sqrtg = []
 
-        flux_modified_weights = self.weights.copy()
-
+        # differential element we need due to the change of variables from volume local coordinates to flux coordinates
+        ds = np.zeros(ns) 
         # Closed interval [0, 1] for s
         min_tflux = 0.0 - np.finfo(float).eps
         for lvol, max_tflux in zip(range(spec.nvol), normalized_toroidal_flux):
@@ -1765,11 +1769,8 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             mask = (self.surfaces <= max_tflux) & (self.surfaces > min_tflux )
             s_in_volume_bounds = self.surfaces[mask]
             # Due to rescaling of s=[-1,1] range of the chebyshev basis in SPEC to the flux coordinate range
-            # flux_modified_weights[mask] *= (max_tflux - min_tflux)
-
-            local_s = interp1d([min_tflux, max_tflux], [-1.0, 1.0], bounds_error=True)(
-                s_in_volume_bounds
-            )
+            local_s = 2*(s_in_volume_bounds-min_tflux)/(max_tflux-min_tflux)-1
+            ds[mask] = 2/(max_tflux-min_tflux)
             min_tflux = max_tflux
             if len(local_s) == 0:
                 continue
@@ -1780,6 +1781,12 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             Rarr0, Zarr0, local_sqrtg, g, djacobian, dg = spec.results.get_grid_and_jacobian_and_metric(lvol, sarr=local_s,tarr=theta1d, zarr=phi1d, derivative=True)
             computed_sqrtg = np.sqrt(np.linalg.det(g.reshape((-1,3,3))))
             assert np.allclose(local_sqrtg, computed_sqrtg.reshape(local_sqrtg.shape))
+
+
+            j2 = spec.results.jacobian(lvol=lvol, sarr=local_s,tarr=theta1d, zarr=phi1d)
+            
+            # transform local s to global s
+            print("s_in_volume_bounds",s_in_volume_bounds)
             # local_sqrtg = local_sqrtg / s_in_volume_bounds[:,None,None]
 
             # B^s, B^theta, B^zeta
@@ -1851,23 +1858,23 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
 
         # From here on, the code is copied from vmec_diagnostics.py QuasisymmetryRatioResidual
         residuals3d = np.zeros(myshape)
-
         B_dot_grad_B = bsupu * d_B_d_theta + bsupv * d_B_d_phi
         B_cross_grad_B_dot_grad_psi = d_psi_d_s * (bsubu * d_B_d_phi - bsubv * d_B_d_theta) / sqrtg
 
         dtheta = theta1d[1] - theta1d[0]
         dphi = phi1d[1] - phi1d[0]
-        V_prime = nfp * dtheta * dphi * np.sum(sqrtg, axis=(1, 2))
+        V_prime = nfp * dtheta * dphi * np.sum(sqrtg, axis=(1, 2)) * ds
         # Check that we can evaluate the flux surface average <1> and the result is 1:
-        assert np.sum(np.abs(np.sqrt((1 / V_prime) * nfp * dtheta * dphi * np.sum(sqrtg, axis=(1, 2))) - 1)) < 1e-12
+        assert np.sum(np.abs(np.sqrt((1 / V_prime) * nfp * dtheta * dphi * np.sum(sqrtg * ds[:,None,None], axis=(1, 2))) - 1)) < 1e-12
 
         nn = self.helicity_n * nfp
         for js in range(ns):
-            residuals3d[js, :, :] = np.sqrt(flux_modified_weights[js] * nfp * dtheta * dphi / V_prime[js] * sqrtg[js, :, :]) \
+            residuals3d[js, :, :] = np.sqrt(self.weights[js] * nfp * dtheta * dphi / V_prime[js] * sqrtg[js, :, :] * ds[js,None,None]) \
                 * (B_cross_grad_B_dot_grad_psi[js, :, :] * (nn - iota[js] * self.helicity_m) \
                    - B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js])) \
                 / (modB[js, :, :] ** 3)
         
+
         import matplotlib.pyplot as plt
         plotvariables = {
             # "modB": modB,
@@ -1875,14 +1882,16 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             # "d_B_d_phi": d_B_d_phi,
             # "bsubv": bsubv,
             # "bsupv": bsupv,
-            "sqrtg": sqrtg[0],
-            "sqrtg1": sqrtg[3],
-            # "sqrtg2": sqrtg[16],
+            "sqrtg inner": sqrtg[0],
+            "sqrtg inner+1": sqrtg[1], 
+            "sqrtg outer": sqrtg[-1], 
+            "+term": B_cross_grad_B_dot_grad_psi[js, :, :] * (nn - iota[js] * self.helicity_m),
+            "-term": B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js]),
             # "sqrtg3": sqrtg[32],
             # "sqrtg4": sqrtg[48],
-            "sqrtg5": sqrtg[-1],
             "residuals3d": residuals3d[-1]
         }
+        print("d_psi_d_s SPEC", d_psi_d_s) 
         fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(12, 6))
         for key, val, ax in zip(plotvariables.keys(), plotvariables.values(), axs.flatten()):
             pcm = ax.imshow(val, origin="lower")
@@ -1891,17 +1900,12 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         plt.tight_layout()
         plt.text(0.5, 0.95, "SPEC", horizontalalignment="center", verticalalignment="center")
         plt.suptitle("SPEC")
-        plt.show()
+        # plt.show()
         
-        # from scipy import integrate
-        # # Create coordinate grid
-        # tarr = theta1d
-        # zarr = phi1d
-        # sarr = self.surfaces
-        # # Get jacobian
-        # j = sqrtg
-        # print("spec volume from sqrtg", nfp * integrate.simpson( y=integrate.simpson( y=integrate.simpson( y=j, x=zarr ), x=tarr ), x=sarr ))
-
+        from scipy import integrate
+        print("spec volume from sqrtg", nfp * integrate.simpson( y=integrate.simpson( y=integrate.simpson( y=sqrtg, x=phi1d ), x=theta1d ) * ds, x=self.surfaces ))
+        vols = np.array([spec.results.get_volume(ivol, ns=32) for ivol in range(spec.nvol)]) 
+        print("Volume Using py_spec",sum(vols), vols)
 
 
         if np.isnan(residuals3d).any():

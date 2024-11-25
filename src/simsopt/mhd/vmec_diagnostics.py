@@ -258,12 +258,9 @@ class QuasisymmetryRatioResidual(Optimizable):
             # "g21": g[2,1],
             # "g22": g[2,2],
             # "bsupv": bsupv,
-            "sqrtg": sqrtg[0],
-            "sqrtg1": sqrtg[3],
-            # "sqrtg2": sqrtg[16],
-            # "sqrtg3": sqrtg[32],
-            # "sqrtg4": sqrtg[48],
-            "sqrtg5": sqrtg[-1],
+            "sqrtg inner": sqrtg[0],
+            "sqrtg inner+1": sqrtg[1], 
+            "sqrtg outer": sqrtg[-1], 
             "residuals3d": residuals3d[-1]
         }
         fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(12, 6))
@@ -273,7 +270,8 @@ class QuasisymmetryRatioResidual(Optimizable):
             fig.colorbar(pcm, ax=ax)
         plt.tight_layout()
         plt.suptitle("VMEC")
-        plt.show()
+        # plt.show()
+        print("d_psi_d_s VMEC", d_psi_d_s) 
 
         from scipy import integrate
         # Create coordinate grid
