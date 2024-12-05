@@ -396,8 +396,8 @@ class DOFs(GSONable, Hashable):
         Args:
             lower_bounds: Lower bounds of the DOFs
         """
-        if len(self.lower_bounds) != len(lower_bounds):
-            raise DofLengthMismatchError(len(lower_bounds), len(self.lower_bounds))
+        if len(self._lower_bounds) != len(lower_bounds):
+            raise DofLengthMismatchError(len(lower_bounds), len(self._lower_bounds))
         self._lower_bounds = np.asarray(lower_bounds, dtype=np.double)
 
     @property
@@ -434,8 +434,8 @@ class DOFs(GSONable, Hashable):
         Args:
             upper_bounds: Upper bounds of the DOFs
         """
-        if len(self.upper_bounds) != len(upper_bounds):
-            raise DofLengthMismatchError(len(upper_bounds), len(self.upper_bounds))
+        if len(self._upper_bounds) != len(upper_bounds):
+            raise DofLengthMismatchError(len(upper_bounds), len(self._upper_bounds))
         self._upper_bounds = np.asarray(upper_bounds, dtype=np.double)
 
     @property
