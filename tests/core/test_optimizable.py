@@ -97,7 +97,7 @@ class N_No(Optimizable):
         return np.sum(self.local_full_x)
 
     def product(self):
-        return np.product(self.local_full_x)
+        return np.prod(self.local_full_x)
 
     return_fn_map = {'sum': sum, 'prod': product}
 
@@ -845,11 +845,47 @@ class OptimizableTests(unittest.TestCase):
     def test_lower_bounds(self):
         pass
 
+    def test_full_lower_bounds(self):
+        iden = Identity(x=10, dof_fixed=False)
+        adder = Adder(n=3, x0=[1, 2, 3], names=['x', 'y', 'z'])
+        adder.fix('y')
+        opt = iden + adder
+        # ['Adder42:x', 'Adder42:y', 'Adder42:z', 'Identity29:x0']
+        opt.full_lower_bounds = np.array([1, 2, 3, 4]) 
+        self.assertTrue(np.allclose(opt.lower_bounds, np.array([1, 3, 4])))
+        self.assertTrue(np.allclose(adder.lower_bounds, np.array([1, 3])))
+        self.assertTrue(np.allclose(adder.full_lower_bounds, np.array([1, 2, 3])))
+        self.assertTrue(np.allclose(iden.lower_bounds, np.array([4])))
+        self.assertTrue(np.allclose(iden.lower_bounds, iden.full_lower_bounds))
+        self.assertTrue(np.allclose(opt.full_bounds[0], opt.full_lower_bounds))
+        with self.assertRaises(ValueError): # Too few elements
+            opt.full_lower_bounds = np.array([1, 2, 3])
+        with self.assertRaises(ValueError): # Too many elements
+            opt.full_lower_bounds = np.array([1, 2, 3, 4, 5])
+
     def test_local_lower_bounds(self):
         pass
 
     def test_upper_bounds(self):
         pass
+
+    def test_full_upper_bounds(self):
+        iden = Identity(x=10, dof_fixed=False)
+        adder = Adder(n=3, x0=[1, 2, 3], names=['x', 'y', 'z'])
+        adder.fix('y')
+        opt = iden + adder
+        # ['Adder42:x', 'Adder42:y', 'Adder42:z', 'Identity29:x0']
+        opt.full_upper_bounds = np.array([1, 2, 3, 4]) 
+        self.assertTrue(np.allclose(opt.upper_bounds, np.array([1, 3, 4])))
+        self.assertTrue(np.allclose(adder.upper_bounds, np.array([1, 3])))
+        self.assertTrue(np.allclose(adder.full_upper_bounds, np.array([1, 2, 3])))
+        self.assertTrue(np.allclose(iden.upper_bounds, np.array([4])))
+        self.assertTrue(np.allclose(iden.upper_bounds, iden.full_upper_bounds))
+        self.assertTrue(np.allclose(opt.full_bounds[1], opt.full_upper_bounds))
+        with self.assertRaises(ValueError): # Too few elements
+            opt.full_upper_bounds = np.array([1, 2, 3])
+        with self.assertRaises(ValueError): # Too many elements
+            opt.full_upper_bounds = np.array([1, 2, 3, 4, 5])
 
     def test_local_upper_bounds(self):
         pass
