@@ -858,6 +858,10 @@ class OptimizableTests(unittest.TestCase):
         self.assertTrue(np.allclose(iden.lower_bounds, np.array([4])))
         self.assertTrue(np.allclose(iden.lower_bounds, iden.full_lower_bounds))
         self.assertTrue(np.allclose(opt.full_bounds[0], opt.full_lower_bounds))
+        with self.assertRaises(ValueError): # Too few elements
+            opt.full_lower_bounds = np.array([1, 2, 3])
+        with self.assertRaises(ValueError): # Too many elements
+            opt.full_lower_bounds = np.array([1, 2, 3, 4, 5])
 
     def test_local_lower_bounds(self):
         pass
@@ -878,6 +882,10 @@ class OptimizableTests(unittest.TestCase):
         self.assertTrue(np.allclose(iden.upper_bounds, np.array([4])))
         self.assertTrue(np.allclose(iden.upper_bounds, iden.full_upper_bounds))
         self.assertTrue(np.allclose(opt.full_bounds[1], opt.full_upper_bounds))
+        with self.assertRaises(ValueError): # Too few elements
+            opt.full_upper_bounds = np.array([1, 2, 3])
+        with self.assertRaises(ValueError): # Too many elements
+            opt.full_upper_bounds = np.array([1, 2, 3, 4, 5])
 
     def test_local_upper_bounds(self):
         pass
