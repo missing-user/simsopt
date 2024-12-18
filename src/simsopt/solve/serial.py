@@ -258,14 +258,14 @@ def serial_solve(prob: Union[Optimizable, Callable],
 
         #if not 'verbose' in kwargs:
 
-        if "bounds" in kwargs:
-            import warnings
-            warnings.warn("The bounds argument is being deprecated, \
-                          please use prob.bounds instead.", DeprecationWarning, 2)
-        else:
-            # Only specify the bounds argument if they are finite
-            if np.isfinite(prob.lower_bounds).any() or np.isfinite(prob.upper_bounds).any():
-                kwargs['bounds'] = prob.bounds
+        # if "bounds" in kwargs:
+        #     import warnings
+        #     warnings.warn("The bounds argument is being deprecated, \
+        #                   please use prob.bounds instead.", DeprecationWarning, 2)
+        # else:
+        #     # Only specify the bounds argument if they are finite
+        #     if np.isfinite(prob.lower_bounds).any() or np.isfinite(prob.upper_bounds).any():
+        #         kwargs['bounds'] = prob.bounds
 
         logger.info("Beginning solve.")
         x0 = np.copy(prob.x)
