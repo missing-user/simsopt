@@ -1197,9 +1197,9 @@ class Optimizable(ABC_Callable, Hashable, GSONable, metaclass=OptimizableMeta):
         Set the lower bounds of the fixed and free DOFS associated with the
         current Optimizable object and its ancestors.
         """
-        if list(self.dof_indices.values())[-1][-1] != len(lb):
+        if list(self._full_dof_indices.values())[-1][-1] != len(lb):
             raise ValueError
-        for opt, indices in self.dof_indices.items():
+        for opt, indices in self._full_dof_indices.items():
             opt._dofs.full_lower_bounds = lb[indices[0]:indices[1]]
 
     @property
@@ -1278,9 +1278,9 @@ class Optimizable(ABC_Callable, Hashable, GSONable, metaclass=OptimizableMeta):
         Set the upper bounds of the fixed and free DOFS associated with the
         current Optimizable object and its ancestors.
         """
-        if list(self.dof_indices.values())[-1][-1] != len(ub):
+        if list(self._full_dof_indices.values())[-1][-1] != len(ub):
             raise ValueError
-        for opt, indices in self.dof_indices.items():
+        for opt, indices in self._full_dof_indices.items():
             opt._dofs.full_upper_bounds = ub[indices[0]:indices[1]]
 
     @property
