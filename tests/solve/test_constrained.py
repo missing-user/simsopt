@@ -10,7 +10,7 @@ except ImportError:
 from simsopt._core.optimizable import Optimizable
 from simsopt.objectives.functions import Rosenbrock
 from simsopt.objectives.constrained import ConstrainedProblem
-from simsopt.solve.serial import constrained_serial_solve
+from simsopt.solve.serial import constrained_serial_solve, serial_solve
 if MPI is not None:
     from simsopt.util.mpi import MpiPartition
     from simsopt.solve.mpi import constrained_mpi_solve
@@ -84,7 +84,7 @@ class ConstrainedSolveTests_mpi(unittest.TestCase):
         prob = ConstrainedProblem(rosen.f)
         options = {'ftol': 1e-9, 'maxiter': 2000}
         with ScratchDir("."):
-            for solver in solvers:
+            for solver in solvers + [serial_solve]:
                 for grad in grads:
                     prob.x = np.zeros(2)
                     solver(prob, grad=grad, options=options)
@@ -142,6 +142,20 @@ class ConstrainedSolveTests_mpi(unittest.TestCase):
                     np.testing.assert_allclose(prob.x, np.zeros(2), atol=1e-3)
                     np.testing.assert_allclose(prob.objective(), 0.0, atol=1e-3)
 
+    # def test_unconstrained(self):
+    #     grads = [True, False]
+    #     solvers_2 = solvers + [serial_solve]
+
+    #     tester = TestFunc1(2, 2)
+    #     prob = ConstrainedProblem(tester.f, tuples_nlc=[(tester.c2, 0.0, np.inf)])
+    #     options = {'ftol': 1e-9, 'maxiter': 2000}
+    #     with ScratchDir("."):
+    #         for solver in solvers_2:
+    #             for grad in grads:
+    #                 prob.x = np.ones(2)
+    #                 solver(prob, grad=grad, options=options)
+    #                 np.testing.assert_allclose(prob.x, np.zeros(2), atol=1e-3)
+    #                 np.testing.assert_allclose(prob.objective(), 0.0, atol=1e-3)
 
 if __name__ == "__main__":
     unittest.main()
