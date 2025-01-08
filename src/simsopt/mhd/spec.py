@@ -373,8 +373,8 @@ class Spec(Optimizable):
             SurfaceRZFourier instance representing the plasma boundary
         """
         # Freeboundary spec updates the boundary surface, so we need to run SPEC again
-        if self.freebound:
-            self.run()
+        # if self.freebound:
+        #     self.run()
         return self._boundary
 
     @boundary.setter
