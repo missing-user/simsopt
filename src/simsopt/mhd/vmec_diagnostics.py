@@ -261,6 +261,8 @@ class QuasisymmetryRatioResidual(Optimizable):
             "sqrtg inner": sqrtg[0],
             "sqrtg inner+1": sqrtg[1], 
             "sqrtg outer": sqrtg[-1], 
+            "+term": B_cross_grad_B_dot_grad_psi[js, :, :] * (nn - iota[js] * self.helicity_m),
+            "-term": B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js]),
             "residuals3d": residuals3d[-1]
         }
         fig, axs = plt.subplots(nrows=3, ncols=3, figsize=(12, 6))

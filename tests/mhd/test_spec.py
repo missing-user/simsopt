@@ -78,6 +78,31 @@ class SpecTests(unittest.TestCase):
             self.assertAlmostEqual(s.boundary.get_rc(0, 1), 0.1, places=places)
             self.assertAlmostEqual(s.boundary.get_zs(0, 1), 0.1, places=places)
 
+    
+    def test_aquasisymmetry(self):
+        filename = os.path.join(TEST_DIR, 'QH-residues.sp')
+        import simsopt.mhd
+        import matplotlib.pyplot as plt
+        # Initialize SPEC from an input file
+        with ScratchDir("."):
+            spec = Spec(filename)
+            surf = spec.boundary
+            vmec = simsopt.mhd.Vmec()
+            vmec.boundary = surf.copy()
+            vmec.indata.phiedge = spec.inputlist.phiedge
+
+            qsv = simsopt.mhd.QuasisymmetryRatioResidual(vmec, np.linspace(0.05,1,10))
+            qss = simsopt.mhd.QuasisymmetryRatioResidualSpec(spec, np.linspace(0.05,1,10))
+
+            qsv.total()
+            qss.total()
+            plt.show()
+
+            places = 6
+            self.assertAlmostEqual(qsv.total(), qss.total(), places)
+            self.assertAlmostEqual(qsv.residuals(), qss.residuals(), places)
+
+
     def test_init_freeboundary_nonstellsym(self):
         """
         Try creating a Spec instance from a freeboundary file that is also

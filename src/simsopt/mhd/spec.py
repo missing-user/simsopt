@@ -1740,10 +1740,6 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
         nphi = self.nphi
         nfp = spec.nfp
         d_psi_d_s = -self.spec.inputlist.phiedge / (2 * np.pi)
-        import warnings
-        # FIXME: only for nvol = 1
-        d_psi_d_s = 2 * d_psi_d_s # 2 is the differential element for change of variables from s[-1, 1] to s[0, 1] d_psi_d_s 
-        warnings.warn("d_psi_d_s is not correct for nvol > 1")
 
         flux = np.atleast_1d(spec.inputlist.tflux[: spec.nvol])
         # In Fortran tflux is normalized so that tflux(Nvol) = 1.0, so tflux[-1]
@@ -1769,6 +1765,7 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             mask = (self.surfaces <= max_tflux) & (self.surfaces > min_tflux )
             s_in_volume_bounds = self.surfaces[mask]
             # Due to rescaling of s=[-1,1] range of the chebyshev basis in SPEC to the flux coordinate range
+            # 2 is the differential element for change of variables from s[-1, 1] to s[0, 1] d_psi_d_s 
             local_s = 2*(s_in_volume_bounds-min_tflux)/(max_tflux-min_tflux)-1
             ds[mask] = 2/(max_tflux-min_tflux)
             min_tflux = max_tflux
@@ -1783,7 +1780,7 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
             assert np.allclose(local_sqrtg, computed_sqrtg.reshape(local_sqrtg.shape))
 
 
-            j2 = spec.results.jacobian(lvol=lvol, sarr=local_s,tarr=theta1d, zarr=phi1d)
+            # j2 = spec.results.jacobian(lvol=lvol, sarr=local_s,tarr=theta1d, zarr=phi1d)
             
             # transform local s to global s
             print("s_in_volume_bounds",s_in_volume_bounds)
@@ -1874,6 +1871,8 @@ class QuasisymmetryRatioResidualSpec(Optimizable):
                    - B_dot_grad_B[js, :, :] * (self.helicity_m * G[js] + nn * I[js])) \
                 / (modB[js, :, :] ** 3)
         
+        from scipy import integrate
+        print("SPEC volume from sqrtg", nfp * integrate.simpson( y=integrate.simpson( y=integrate.simpson( y=sqrtg, x=phi1d ), x=theta1d ), x=self.surfaces ))
 
         import matplotlib.pyplot as plt
         plotvariables = {
